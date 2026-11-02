@@ -19,10 +19,6 @@ You need: a Mac or Linux computer, `python3` (3.8+), [libusb](https://libusb.inf
 **2. Run the tool** (run it from a folder you don't mind it saving a backup file into):
 
 ```sh
-# private repo (needs the GitHub CLI `gh`, logged in with access to this repo):
-gh api -H 'Accept: application/vnd.github.raw' repos/clippycoder/cat-s22-verizon-wfc-fix/contents/fix.sh | bash
-
-# once the repo is public this will work instead:
 curl -fsSL https://raw.githubusercontent.com/clippycoder/cat-s22-verizon-wfc-fix/main/fix.sh | bash
 ```
 
