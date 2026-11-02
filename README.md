@@ -10,6 +10,8 @@ Fixes **Verizon Wi-Fi calling voice** on the **CAT S22 Flip** when the phone sho
 
 Verizon's Wi-Fi-calling voice only registers if the modem's IMS settings file contains the SIM's own line number. Verizon-certified phones fill that in at setup; this phone's firmware has nothing that does, so the field is empty, the modem advertises `cs` instead of `cs,volte`, and Android reports no voice capability. This tool writes the line number into that one 20-byte field.
 
+Prefer the story? There is a short ebook about the bug, the fix and what it means: [The Empty Number](the-empty-number.pdf) (PDF).
+
 ## Quick start
 
 You need: a Mac or Linux computer, `python3` (3.8+), [libusb](https://libusb.info) (`brew install libusb` / `sudo apt install libusb-1.0-0`), a USB data cable, and the SIM's phone number.
