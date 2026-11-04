@@ -9,6 +9,8 @@
 # restore a saved backup, or list USB devices for troubleshooting. No flags needed.
 #
 # The phone's USB diag port must already be open (dial ##3424# on the phone; see README.md).
+# If adb is installed and USB debugging is on, the SIM's line number is read off the phone;
+# otherwise you type it.
 # This script installs nothing system-wide: it needs python3 and libusb, and puts the one
 # Python dependency (pyusb) in a temporary folder that is deleted when it exits.
 # macOS and Linux only.
@@ -311,6 +313,78 @@ def normalize_number(text):
     return d
 
 
+# ---------- reading the line number off the phone (optional, needs adb) ----------
+# `service call iphonesubinfo N` talks to Android's phone-info service. Run as the adb shell user it
+# returns the SIM's own line number without root. Transaction numbers are Android-version specific, so
+# a few are tried and every answer is validated: anything that is not a US number (an IMSI, an ICCID,
+# an empty string) is ignored.
+PHONE_INFO_CALLS = (15, 19, 16, 20)        # getLine1Number, getMsisdn, and their ...ForSubscriber forms
+PHONE_NUMBER_CACHE = {}
+
+
+def parse_parcel_string(text):
+    """Decode the string out of `service call` output ('Result: Parcel(0x00000000: 00000000 0000000c ...')."""
+    words = []
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        for tok in line.split(":", 1)[1].split("'")[0].split():
+            if len(tok) == 8 and all(c in "0123456789abcdefABCDEF" for c in tok):
+                words.append(int(tok, 16))
+    if len(words) < 2 or words[0] != 0 or not 0 < words[1] < 64:
+        return None
+    raw = b"".join(struct.pack("<I", w) for w in words[2:])[:words[1] * 2]
+    try:
+        return raw.decode("utf-16-le")
+    except UnicodeDecodeError:
+        return None
+
+
+def run_adb(args, timeout=15):
+    import subprocess
+    try:
+        r = subprocess.run(["adb"] + args, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def detect_number():
+    """-> (number or None, reason). number is 11 digits starting with 1."""
+    import shutil
+    if not shutil.which("adb"):
+        return None, "adb is not installed, so the number can't be read from the phone."
+    out = run_adb(["devices"])
+    if out is None:
+        return None, "adb did not answer."
+    rows = [l.split() for l in out.splitlines()[1:] if l.strip()]
+    ready = [r[0] for r in rows if len(r) >= 2 and r[1] == "device"]
+    if not ready:
+        if any(len(r) >= 2 and r[1] == "unauthorized" for r in rows):
+            return None, "The phone is asking you to allow USB debugging: accept the prompt on its screen."
+        return None, "No phone is connected over adb (turn on USB debugging in Developer options)."
+    serial = ready[0]
+    if len(ready) > 1:
+        print("More than one phone is connected over adb:")
+        for i, s in enumerate(ready, 1):
+            print("  %d) %s" % (i, s))
+        serial = ready[pick_number("Which one is the phone you want to fix? ", 1, len(ready)) - 1]
+    for n in PHONE_INFO_CALLS:
+        out = run_adb(["-s", serial, "shell", "service", "call", "iphonesubinfo", str(n)])
+        text = parse_parcel_string(out) if out else None
+        number = normalize_number(text) if text else None
+        if number:
+            return number, ""
+    return None, "The phone didn't report a US line number over adb (the SIM may not expose it)."
+
+
+def remember_number():
+    number, reason = detect_number()
+    if number:
+        PHONE_NUMBER_CACHE["number"] = number
+    return number, reason
+
+
 def save_backup(item):
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     for n in range(100):
@@ -354,7 +428,19 @@ def action_enable():
             raise Problem("\nThe item does not look like the expected layout, so nothing will be written.")
         if mdn_status(item) != "EMPTY":
             print("WARNING: the field already holds a value; it will be replaced (a backup is saved first).")
-        number = None
+        number, from_phone = None, False
+        found, reason = remember_number()                        # live read first, else the one read at start-up
+        found = found or PHONE_NUMBER_CACHE.get("number")
+        if found:
+            print("\nThe phone reported its own line number over adb (ending ...%s)." % found[-4:])
+            ans = ask("Write it? [Y/n, or t to type a different number] ").lower()
+            if ans in ("", "y", "yes"):
+                number, from_phone = found, True
+            elif ans not in ("t", "type"):
+                print("Cancelled. Nothing was changed.")
+                return
+        else:
+            print("\n" + reason + " Type it instead.")
         while number is None:
             text = getpass.getpass("\nSIM line number (10 digits, or 1 + 10 digits; input is hidden; empty to cancel): ")
             if not text.strip():
@@ -367,10 +453,11 @@ def action_enable():
         if new == item:
             print("\nThe field already holds exactly that number. Nothing to do.")
             return
-        print("\nAbout to write a number ending in ...%s (bytes 0x%02x-0x%02x of the item only)." % (number[-4:], MDN_START, MDN_END - 1))
-        if not confirm("Continue?"):
-            print("Cancelled. Nothing was changed.")
-            return
+        if not from_phone:
+            print("\nAbout to write a number ending in ...%s (bytes 0x%02x-0x%02x of the item only)." % (number[-4:], MDN_START, MDN_END - 1))
+            if not confirm("Continue?"):
+                print("Cancelled. Nothing was changed.")
+                return
         print("Backup of the current item saved to: %s" % save_backup(item))
         efs_write(port, new)
         if efs_read(port) == new:
@@ -470,7 +557,10 @@ def main():
         raise SystemExit("This tool is interactive: run it in a terminal window.")
     print("cat-s22-verizon-wfc-fix")
     print("-----------------------")
-    print("Before you start: open the phone's USB diag port (dial ##3424# on the phone) and connect it with a data cable.")
+    print("Before you start: connect the phone with a data cable and open its USB diag port (dial ##3424# on the phone).")
+    number, _ = remember_number()
+    if number:
+        print("The phone's line number was read over adb (ending ...%s); option 2 will use it." % number[-4:])
     actions = {"1": action_check, "2": action_enable, "3": action_restore, "4": action_list}
     try:
         while True:
