@@ -14,9 +14,9 @@ Prefer the story? There is a short ebook about the bug, the fix and what it mean
 
 ## Quick start
 
-You need: a Mac or Linux computer, `python3` (3.8+), [libusb](https://libusb.info) (`brew install libusb` / `sudo apt install libusb-1.0-0`), a USB data cable, and the SIM's phone number.
+You need: a Mac or Linux computer, `python3` (3.8+), [libusb](https://libusb.info) (`brew install libusb` / `sudo apt install libusb-1.0-0`), a USB data cable, and (optionally) [adb](https://developer.android.com/tools/releases/platform-tools) so the tool can read the SIM's phone number off the phone for you. Without adb you just type the number.
 
-**1. Open the phone's USB diag port.** On the phone's dialer, dial **`##3424#`** (DIAG). Keep the phone connected to the computer. (The tool cannot do this for you, and the code is device/firmware-specific.)
+**1. Connect the phone and open its USB diag port.** For automatic number detection, first turn on *USB debugging* (Settings → Developer options) and accept the "Allow USB debugging?" prompt. Then, on the phone's dialer, dial **`##3424#`** (DIAG). Keep the phone connected to the computer. (The tool cannot open the diag port for you, and the code is device/firmware-specific.)
 
 **2. Run the tool** (run it from a folder you don't mind it saving a backup file into):
 
@@ -37,7 +37,7 @@ A menu appears; everything is done from it:
 ```
 
 - **1** reads the setting and tells you whether it is empty.
-- **2** walks you through the fix: it shows what it found, asks for the line number at a **hidden** prompt, asks you to confirm, saves a backup of the original, rewrites the item with only that field changed, reads it back and verifies.
+- **2** walks you through the fix: it shows what it found, reads the SIM's line number off the phone over adb (showing only its last 4 digits) and asks `Write it?`, then saves a backup of the original, rewrites the item with only that field changed, reads it back and verifies. If adb isn't available or the phone doesn't report a US number, it asks for the number at a **hidden** prompt and for a confirmation instead. Answer `t` to type a different number than the detected one.
 - **3** lists the backups saved in the current folder (or lets you type a path) and writes the one you pick back.
 - **4** lists the USB devices the computer can see and which one is a diag port.
 - If more than one phone is connected in diag mode, it asks which one you mean.
@@ -47,14 +47,14 @@ A menu appears; everything is done from it:
 ## Safety
 
 - It changes **one setting**: it rewrites one 1024-byte file in the modem's storage with only 11 bytes different (bytes `0x0e`–`0x18`; the rest of the 20-byte field is zeroed). It never touches boot, the modem image, or partitions, and needs no root.
-- The number you type is not passed as an argument and is not saved; only its last 4 digits are shown on the confirm line. The **backup file contains the previous value of the setting** (a phone number if one was set): don't share or commit it.
+- The number (read over adb, or typed) is not passed as an argument and is not saved; only its last 4 digits are ever shown. Reading it uses Android's own phone-info service as the adb shell user (no root, nothing installed on the phone); the tool only asks for the line number and ignores any answer that is not a US number. The **backup file contains the previous value of the setting** (a phone number if one was set): don't share or commit it.
 - If something is interrupted after the write started, the tool says the write *may* have happened — choose 1 to check, and 3 to restore the backup if needed.
 - It checks that the item looks like the expected layout, not that the phone is a CAT S22 Flip: it will write to any diag-open phone whose item looks right, so connect only the phone you mean (the tool shows the USB id and asks if several are connected).
 - Provided as-is, with no warranty. Writing to a modem's storage can in theory break things; you have a backup and menu option 3.
 
 ## After a SIM or number change
 
-The stored number must equal the SIM's own number. If you change SIM or number, run the tool again (option 2). Verizon's own phone software does this automatically; this phone has nothing that does.
+The stored number must equal the SIM's own number. If you change SIM or number, run the tool again (option 2; it re-reads the number from the phone). Verizon's own phone software does this automatically; this phone has nothing that does.
 
 ## Emergency calls (E911) — please read
 
@@ -73,6 +73,7 @@ The setting you are writing is, on Verizon phones, the marker that "Wi-Fi callin
 - **macOS:** no driver is bound to the diag interface, so no extra drivers are needed. **Windows is not supported.**
 - **"No reply from the modem"** — wait for the phone to finish booting and try again.
 - **"The modem refused…"** — nothing was changed; open an issue with the message. (If you see "may or may not have gone through", follow the note.)
+- **"…can't be read from the phone" / "No phone is connected over adb"** — optional feature; either install adb and enable USB debugging, or type the number. Some phones drop adb when the diag port opens: start the tool **before** dialing `##3424#` (it reads the number at start-up), then dial the code and choose option 2. (Not yet confirmed on the S22 either way; typing always works.)
 - **"This tool is interactive"** — run it in a real terminal window (it reads the menu from the keyboard).
 
 ## How it works (short)
